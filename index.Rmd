@@ -10574,16 +10574,436 @@ auroc +
   )
 ```
 
+## Preparing web application
 
+For web application, we prepared an example dataset, user interface, and 
+processing script at the side of server computer. No line of codes for the web 
+is included in the R Markdown or R Script. Description for this web application 
+is already clearly described in the main text.
 
+```{r Save variables for app, eval=FALSE, include=FALSE}
+# Save the feature and the reg expression.
+int_nps_eol_p %>%
+  select(key) %>%
+  mutate_at('key',function(x){
+    ifelse(str_detect(x,'causal_'),paste0(str_remove_all(x,'causal_'),'*'),x)
+  }) %>%
+  left_join(rename(dag$measure_nodes,key=label),by='key') %>%
+  mutate(name=ifelse(is.na(name),key,name)) %>%
+  mutate_at('key',function(x){
+    ifelse(str_detect(x,'\\*'),paste0('causal_',str_remove_all(x,'\\*')),x)
+  }) %>%
+  setNames(c('features','regex')) %>%
+  saveRDS('data/features.rds')
 
+# Save nationwide historical rate.
+preproc(nw_int_hlin)$hist_rate %>%
+  filter(mh%in%readRDS('data/features.rds')$features) %>%
+  saveRDS('data/hist_rates.rds')
 
+# Reduce caret object like random forest.
+source('R/reduce_rf-function.R')
+readRDS('data/calib_divnn.rds') %>%
+  reduce_rf() %>%
+  saveRDS('data/small_calib_divnn.rds')
 
+# Save the ontonotation.
+model_weight$divnn %>%
+  select(Ontology,Predictor,Description) %>%
+  filter(!duplicated(.)) %>%
+  arrange(desc(Ontology),Predictor,Description) %>%
+  saveRDS('data/ontonotation.rds')
+```
 
+```{r Prepare ROC tables, eval=FALSE, include=FALSE}
+calib_model$divnn$pred %>%
+  
+  # Take needed columns.
+  select(Resample,rowIndex,event,obs) %>%
+  setNames(c('subset','index','score','outcome')) %>%
+  mutate(outcome=as.double(outcome=='event')) %>%
+  
+  # Create multiple thresholds.
+  left_join(
+    select(.,index) %>%
+      filter(!duplicated(.)) %>%
+      arrange(index) %>%
+      cbind(
+        data.frame(
+            key=paste0('th_',str_pad(0:100,3,'left','0'))
+            ,value=seq(0,1,len=101)
+          ) %>%
+          spread(key,value)
+      )
+    ,by='index'
+  ) %>%
+  
+  # Compute confusion matrix.
+  gather(key,th,-subset,-index,-score,-outcome) %>%
+  select(-key) %>%
+  mutate(pred=as.integer(score>th)) %>%
+  mutate(
+    tp=as.integer(outcome==1 & pred==1)
+    ,fn=as.integer(outcome==1 & pred==0)
+    ,fp=as.integer(outcome==0 & pred==1)
+    ,tn=as.integer(outcome==0 & pred==0)
+  ) %>%
+  select(-index,-score,-outcome,-pred) %>%
+  group_by(subset,th) %>%
+  summarize_all(sum) %>%
+  ungroup() %>%
+  
+  # Compute evaluation metrics.
+  mutate(
+    tpr=tp/(tp+fn+1e-17)
+    ,tnr=tn/(tn+fp+1e-17)
+    ,ppv=tp/(tp+fp+1e-17)
+    ,npv=tn/(tn+fn+1e-17)
+  ) %>%
+  select(-subset,-tp,-fn,-fp,-tn) %>%
+  
+  # Compute ROC components.
+  group_by(th) %>%
+  summarize_all(function(x){
+    y=mean(x)+(-1:1)*qnorm(0.975)*sd(x)/sqrt(length(x))
+    paste0(y,collapse='|')
+  }) %>%
+  gather(metric,interval,-th) %>%
+  separate(interval,c('lb','avg','ub'),sep='\\|') %>%
+  mutate_at(c('lb','avg','ub'),as.numeric) %>%
+  mutate_at(c('lb','avg','ub'),function(x){
+    round(ifelse(x<0,0,ifelse(x>1,1,x)),4)
+  }) %>%
+  
+  # Save the ROC table.
+  saveRDS('data/classification.rds')
+```
 
+```{r Load pre-obtained non-calib pred proba of DI-VNN, include=FALSE}
+predictions=readRDS('data/predictions.rds')
 
+# Prepare ontoarray prerequisites
+test_data_int=
+  readRDS('data/pw_hlin.rds') %>%
+  .[,!pData(phenoData(.))$censoring] %>%
+  .[,pData(protocolData(.))$int] %>%
+  test_transformer(
+    SGD1bit_fit=readRDS('data/input.rds')$fit
+    ,similarity=readRDS('data/input.rds')$similarity
+    ,mapping=readRDS('data/input.rds')$mapping
+    ,ontology=readRDS('data/input.rds')$ontology
+    ,ranked=T
+    ,dims=7
+    ,decreasing=F
+    ,seed_num=33
+  )
+```
 
+```{r Reformat non-calib pred proba of DI-VNN, include=FALSE}
+predictions_non_calib0=
+  
+  # Give back the name of the DI-VNN ontologies
+  predictions %>%
+  setNames(
+    modeling_divnn$history$metrics %>%
+      names() %>%
+      .[str_detect(.,'val_')
+        &str_detect(.,'_loss')&str_detect(.,'ONT|root')] %>%
+      str_remove_all('val_|_loss')
+  ) %>%
+  
+  # Set back number of instances, that is changed due to batch sizing
+  lapply(function(x)x[seq(ncol(test_data_int)),,drop=F]) %>%
+  
+  # Combine with the outcome data.
+  c(list(outcome=test_data_int$outcome)) %>%
+  as.data.frame() %>%
+  select(root,outcome) %>%
+  mutate(
+    outcome=
+      factor(
+        ifelse(outcome==1,'event','nonevent')
+        ,c('nonevent','event')
+      )
+  ) %>%
+  
+  # Mimic the standard input of evalm
+  rename(event=root) %>%
+  mutate(nonevent=1-event) %>%
+  select(nonevent,everything()) %>%
+  
+  # Give back the rownames of the validation set
+  `rownames<-`(colnames(test_data_int))
 
+predictions_non_calib=
+  predictions_non_calib0 %>%
+  select(obs=outcome,pred=event)
+```
+
+```{r Obtain calib pred proba of DI-VNN, include=FALSE}
+predictions_calib0=
+  predictions_non_calib0 %>%
+  cbind(
+    suppressWarnings(
+        predict(
+          readRDS('data/calib_divnn.rds')
+          ,newdata=.
+          ,type='prob'
+        )
+      ) %>%
+      rename_all(function(x)paste0(x,'2'))
+  ) %>%
+  select(-nonevent,-event) %>%
+  rename_all(function(x)str_remove_all(x,'2')) %>%
+  select(nonevent,event,everything())
+
+predictions_calib=
+  predictions_calib0 %>%
+  select(obs=outcome,pred=event)
+```
+
+```{r Show training samples with best predictions, eval=FALSE, include=FALSE}
+pw_hlin %>%
+  
+  # Get the phenotype and protocol data.
+  lapply(X=1,Y=.,function(X,Y){
+    Z=phenoData(Y) %>%
+      pData()
+    K=protocolData(Y) %>%
+      pData()
+    Z %>%
+      rownames_to_column(var='id') %>%
+      left_join(
+        K %>%
+          rownames_to_column(var='id')
+        ,by='id'
+      )
+  }) %>%
+  .[[1]] %>%
+  inner_join(
+    predictions_calib0 %>%
+      rownames_to_column(var='id') %>%
+      select(id,outcome,pred=event)
+    ,by=c('id','outcome')
+  ) %>%
+  inner_join(
+    predictions_calib %>%
+      rownames_to_column(var='id') %>%
+      select(id,outcome=obs,calib_pred=pred)
+    ,by=c('id','outcome')
+  ) %>%
+  select(
+    subject_id
+    ,healthcare_id
+    ,admission_date
+    ,outcome
+    ,pred
+    ,calib_pred
+    ,everything()
+  ) %>%
+  mutate(
+    outcome=as.integer(outcome=='event')
+    ,pred=as.integer(pred>filter(spec_th,model=='DI-VNN')$th)
+    ,calib_pred=as.integer(pred>filter(spec_th,model=='DI-VNN')$th)
+  ) %>%
+  filter(outcome==1 & pred==1 & calib_pred==1) %>%
+  
+  # Save these training examples with the best predictions.
+  saveRDS('data/subject_examples.rds')
+```
+
+```{r Load training samples with best predictions & visit data, include=FALSE}
+subject_examples=readRDS('data/subject_examples.rds')
+target_visits=readRDS('data/target_visits.rds')
+```
+
+```{r Identify number of medical histories, include=FALSE}
+med_hist_n=
+  seq(nrow(subject_examples)) %>%
+  pbsapply(function(x)
+    target_visits %>%
+      filter(
+        subject_id==subject_examples$subject_id[x]
+        & healthcare_id==subject_examples$healthcare_id[x]
+      ) %>%
+      select(admission_date,code) %>%
+      nrow()
+  )
+```
+
+```{r Input example for the app, include=FALSE}
+app=list()
+
+app$subject_id=
+  subject_examples %>%
+  slice(which.max(med_hist_n)) %>%
+  pull(subject_id)
+
+app$healthcare_id=
+  subject_examples %>%
+  slice(which.max(med_hist_n)) %>%
+  pull(healthcare_id)
+
+app$raw_visit=
+  readRDS('data/target_visits.rds') %>%
+  filter(
+    subject_id==app$subject_id
+    & healthcare_id==app$healthcare_id
+  ) %>%
+  select(admission_date,code)
+
+app$prediction_date=
+  app$raw_visit %>%
+  filter(admission_date==max(admission_date)) %>%
+  pull(admission_date) %>%
+  as.character() %>%
+  unique() %>%
+  as.Date()
+```
+
+```{r Save an input example as csv, eval=FALSE, include=FALSE}
+app$raw_visit %>%
+  filter(admission_date<=app$prediction_date) %>%
+  write_csv('data/example.csv')
+```
+
+```{r Show input table, eval=FALSE, include=FALSE}
+app$raw_visit %>%
+  filter(admission_date<=app$prediction_date) %>%
+  kable() %>%
+  kable_classic()
+```
+
+```{r Processing codes at the server side, eval=FALSE, include=FALSE}
+# Create null input if no positive features are found.
+app$input0=
+  readRDS('data/features.rds') %>%
+  mutate(I1=NA) %>%
+  select(-regex) %>%
+  column_to_rownames(var='features')
+
+# Filter visit up to the current date (the prediction date).
+app$visit_up_to_current=
+  app$raw_visit %>%
+  filter(admission_date<=app$prediction_date)
+
+# Only use the latest encounter for each code.
+app$visit_latest_enc=
+  app$visit_up_to_current %>%
+  group_by(code) %>%
+  filter(admission_date==max(admission_date)) %>%
+  ungroup()
+
+# Only use the codes for the features.
+app$visit_with_features=
+  app$visit_latest_enc %>%
+  filter(
+    code
+    %in%(
+      readRDS('data/features.rds')$features %>%
+        .[!str_detect(.,'causal_')]
+    )
+    |
+    str_detect(
+      code
+      ,paste0(
+        readRDS('data/features.rds')$regex %>%
+          .[str_detect(readRDS('data/features.rds')$features,'causal_')]
+        ,collapse='|'
+      )
+    )
+  )
+
+# Create the input dataframe with the positive features.
+app$input=
+  readRDS('data/features.rds') %>%
+  sapply(X=seq(nrow(.)),Y=.,Z=app$visit_with_features,function(X,Y,Z){
+    if(str_detect(Y$features[X],'causal_')){
+      K=Z %>%
+        filter(str_detect(str_to_upper(code),Y$regex[X]))
+    }else{
+      K=Z %>%
+        filter(code==Y$regex[X])
+    }
+    if(nrow(K)==0){
+      NA
+    }else{
+      as.duration(app$prediction_date-max(K$admission_date))/ddays(1)
+    }
+  }) %>%
+  setNames(readRDS('data/features.rds')$features) %>%
+  data.frame(I1=.)
+
+# Transform into historical rates.
+app$hlin=
+  ExpressionSet(
+    assayData=
+      app$input %>%
+      as.matrix()
+    ,phenoData=
+      data.frame(outcome=NA,row.names='I1') %>%
+      AnnotatedDataFrame()
+    ,featureData=
+      readRDS('data/features.rds') %>%
+      column_to_rownames(var='features') %>%
+      AnnotatedDataFrame()
+  ) %>%
+  trans_hist_rate(
+    hist_rate=readRDS('data/hist_rates.rds')
+    ,interpolation='linear'
+    ,verbose=T
+  )
+
+# Compile a tidy set.
+app$tidyset=
+  test_transformer(
+    test_data=app$hlin
+    ,SGD1bit_fit=readRDS('data/input.rds')$fit
+    ,similarity=readRDS('data/input.rds')$similarity
+    ,mapping=readRDS('data/input.rds')$mapping
+    ,ontology=readRDS('data/input.rds')$ontology
+    ,ranked=T
+    ,dims=7
+    ,decreasing=F
+    ,seed_num=33
+  ) %>%
+  `colnames<-`('I1')
+
+# Save a single tidy set 
+# for reducing time of the compiling process.
+saveRDS(app$tidyset,'data/single_tidyset.rds')
+
+# Calling DI-VNN.
+refresh_session()
+app$ontonet=
+  readRDS('data/output.rds') %>%
+  generator.ontonet(l2_norm=0.1) %>%
+  load_model_weights_hdf5('data/ontonet.h5') %>%
+  compile(
+    optimizer=optimizer_sgd(
+      lr=readRDS('data/modeling_divnn.rds')$history$metrics$lr %>%
+        .[which.max(
+          readRDS('data/modeling_divnn.rds')$history$metrics$val_root_roc
+        )]
+      ,momentum=0.9
+    )
+    ,loss='mean_squared_error'
+    ,loss_weights=c(rep(
+        0.3/(0.3*(length(.$outputs)-1)+1),length(.$outputs)-1)
+        ,1/(0.3*(length(.$outputs)-1)+1)
+      )
+    ,metrics=c(
+        tf$keras$metrics$AUC(name='roc')
+        ,tf$keras$metrics$TruePositives(name='tp')
+        ,tf$keras$metrics$FalseNegatives(name='fn')
+        ,tf$keras$metrics$FalsePositives(name='fp')
+        ,tf$keras$metrics$TrueNegatives(name='tn')
+      )
+  )
+
+# Save the ontonet architecture, weights, and optimizer.
+save_model_hdf5(app$ontonet,'data/entire_ontonet.h5')
+```
 
 
 
