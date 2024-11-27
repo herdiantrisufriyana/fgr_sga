@@ -6069,13 +6069,13 @@ event_dist=
   event_dist_data %>%
   filter(!model%in%c('Causal RR','PC-RF')) %>%
   qplot(event,n,data=.,geom='col',na.rm=T) +
-  geom_vline(
-    data=
-      spec_th %>%
-      filter(!model%in%c('Causal RR','PC-RF'))
-    ,aes(xintercept=th)
-    ,lty=2
-  ) +
+  # geom_vline(
+  #   data=
+  #     spec_th %>%
+  #     filter(!model%in%c('Causal RR','PC-RF'))
+  #   ,aes(xintercept=th)
+  #   ,lty=2
+  # ) +
   facet_wrap(~model,ncol=5) +
   scale_x_continuous('Predicted probability',limits=c(0,0.1)) +
   scale_y_continuous(
@@ -6130,13 +6130,13 @@ nonevent_dist=
   nonevent_dist_data %>%
   filter(!model%in%c('Causal RR','PC-RF')) %>%
   qplot(event,n,data=.,geom='col',na.rm=T) +
-  geom_vline(
-    data=
-      spec_th %>%
-      filter(!model%in%c('Causal RR','PC-RF'))
-    ,aes(xintercept=th)
-    ,lty=2
-  ) +
+  # geom_vline(
+  #   data=
+  #     spec_th %>%
+  #     filter(!model%in%c('Causal RR','PC-RF'))
+  #   ,aes(xintercept=th)
+  #   ,lty=2
+  # ) +
   facet_wrap(~model,ncol=5) +
   scale_x_continuous(
     'Predicted probability',limits=c(0,0.1)
@@ -6163,6 +6163,11 @@ dca=
   slice(1) %>%
   ungroup() %>%
   filter(!model%in%c('Causal RR','PC-RF')) %>%
+  mutate(
+    model=
+      model %>%
+      factor(c('DI-VNN','PC-ENR','PC-GBM'))
+  ) %>%
   ggplot(aes(th,nb)) +
   geom_line(
     data=
@@ -6179,23 +6184,54 @@ dca=
   geom_hline(yintercept=0,lty=1,size=1) +
   geom_text(
     data=
+      # spec_th %>%
+      # filter(!model%in%c('Causal RR','PC-RF'))
       spec_th %>%
-      filter(!model%in%c('Causal RR','PC-RF'))
-    ,aes(x=th,y=0.005,label=paste0(round(th,3),'\n(95% specificity)'))
-    ,size=3,hjust=-0.15,vjust=1,family='sans'
+      filter(!model%in%c('Causal RR','PC-RF')) %>%
+      mutate(th=round(th,2)) %>%
+      left_join(
+        roc %>%
+          filter(bound=='avg') %>%
+          select(model,th,nb)
+        ,by=c('th','model')
+      ) %>%
+      left_join(
+        data.frame(
+          model=c('PC-ENR','PC-GBM','DI-VNN')
+          ,x_value=c(0.03,0.03,0.02)
+          ,y_value=c(0.00125,0.00075,0.003)
+        )
+        ,by='model'
+      )
+    # ,aes(x=th,y=0.005,label=paste0(round(th,3),'\n(95% specificity)'))
+    ,aes(
+      x=x_value
+      ,y=y_value
+      ,label=paste0(round(th,2),', ',model)
+      ,color=model
+    )
+    # ,size=3,hjust=-0.15,vjust=1,family='sans'
+    ,size=2.5,hjust=0,vjust=0.5,family='sans'
+    ,show.legend=F
   ) +
-  geom_vline(
-    data=
-      spec_th %>%
-      filter(!model%in%c('Causal RR','PC-RF'))
-    ,aes(xintercept=th)
-    ,lty=2
-  ) +
-  geom_line() +
-  geom_point() +
-  facet_wrap(~model,ncol=5) +
+  # geom_vline(
+  #   data=
+  #     spec_th %>%
+  #     filter(!model%in%c('Causal RR','PC-RF'))
+  #   ,aes(xintercept=th)
+  #   ,lty=2
+  # ) +
+  # geom_line() +
+  geom_line(aes(color=model),na.rm=T,show.legend=F) +
+  # geom_point() +
+  geom_point(aes(color=model),na.rm=T,show.legend=F) +
+  # facet_wrap(~model,ncol=5) +
+  # scale_x_continuous(
+  #   'Threshold',limits=c(0,0.1)
+  #   ,labels=scales::number_format(accuracy=0.01,decimal.mark='.')
+  # ) +
   scale_x_continuous(
-    'Threshold',limits=c(0,0.1)
+    'Threshold',limits=c(0,0.06),breaks=seq(0,0.1,0.01)
     ,labels=scales::number_format(accuracy=0.01,decimal.mark='.')
   ) +
   scale_y_continuous(
@@ -8470,7 +8506,7 @@ sets. Uncertainty intervals were also computed by bootstrapping for 30 times.
 A clear description on model validation is already given in the main text.
 
 ```{r Plot the AUROCs, include=FALSE}
-auroc=
+auroc0=
   auroc_table %>%
   mutate(
     study=
@@ -8572,7 +8608,10 @@ auroc=
           sort() %>%
           .[c(6,7,1,4,3,8,2,5)]
       )
-  ) %>%
+  )
+
+auroc= 
+  auroc0 %>%
   ggplot(aes(model,Score,color=model_group)) +
   geom_point(size=1) +
   geom_errorbar(aes(ymin=lb,ymax=ub),width=0.5,size=1) +
@@ -8598,10 +8637,373 @@ auroc=
     ,axis.text.x=element_text(family='sans')
     ,strip.text.y=element_text(angle=0,size=unit(7,'pt'),family='sans')
   )
+
+auroc2= 
+  auroc0 %>%
+  filter(
+    set
+    %in%c('Internal calibration\nsplit'
+          ,'External random &\nnon-random splits'
+        )
+  ) %>%
+  ggplot(aes(model,Score,color=model_group)) +
+  geom_point(size=1,show.legend=F) +
+  geom_errorbar(aes(ymin=lb,ymax=ub),width=0.5,size=1,show.legend=F) +
+  # geom_hline(aes(yintercept=set_score),lty=2) +
+  # geom_hline(yintercept=0.5,lty=2) +
+  # geom_text(
+  #   aes(
+  #     x=model
+  #     ,y=ifelse(set=='Internal calibration\nsplit',0.55,0.65)
+  #     ,label=model
+  #   )
+  #   ,size=3,hjust=0,vjust=0.5
+  #   ,show.legend=F
+  # ) +
+  facet_wrap(set~.,scales='free_y',ncol=1) +
+  # facet_grid(
+  #   set~.
+  #   ,scales='free_y'
+  #   ,space='free'
+  # ) +
+  coord_flip() +
+  # geom_text(aes(label=round(wd*100,2)),hjust=-0.2,vjust=0.2,size=2.5,na.rm=T) +
+  scale_x_discrete('Data Partition') +
+  scale_y_continuous(
+    'AUROC (95% CI)',breaks=seq(0,1,0.1)
+    ,limits=c(0.5,0.75)
+    ,labels=scales::number_format(accuracy=0.1,decimal.mark='.')
+  ) +
+  scale_color_discrete(name='Model') +
+  theme(
+    axis.title.y=element_blank()
+    ,axis.title.x=element_text(family='sans')
+    # ,axis.text.y=element_blank()
+    # ,axis.ticks.y=element_blank()
+    ,axis.text.y=element_text(size=unit(8,'pt'),family='sans')
+    ,axis.text.x=element_text(family='sans')
+    ,strip.text.y=element_text(angle=0,size=unit(7,'pt'),family='sans')
+  )
 ```
 
 ```{r Compare the AUROCs, fig.height=7.08661, fig.width=7.08661}
 auroc
+```
+
+```{r Compare the AUROCs of our models only, fig.height=2.85827, fig.width=1.85}
+auroc2
+```
+
+```{r Revise figure 4 to figure 3, include=FALSE}
+srma_group3=
+  srma_rename %>%
+  select(
+    -ultrasound,-biomarker,-others,-inaccessible,-element
+    ,-event,-nonevent
+    ,-sens,-sens_lb,-sens_ub,-spec,-spec_lb,-spec_ub,-auroc,-auroc_lb,-auroc_ub
+    ,-inference
+  ) %>%
+  gather(predictor,used,-study,-year,-type, -total) %>%
+  mutate_at(c('study','predictor'),function(x)factor(x,unique(x))) %>%
+  mutate(
+    predictor=
+      predictor %>%
+      str_replace_all('papp_a','PAPP-A') %>%
+      str_replace_all('uta_pi','UtA-PI') %>%
+      str_replace_all('fbhcg','Free b-hCG') %>%
+      str_replace_all('crl','CRL') %>%
+      str_replace_all('age','Age') %>%
+      str_replace_all('weight','Weight') %>%
+      str_replace_all('cig_smoker|cig','Cig. smoker') %>%
+      str_replace_all(',c ',',Cig. smoker ') %>%
+      str_replace_all('race_ethnicity','Race/ethnicity') %>%
+      str_replace_all('map','MAP') %>%
+      str_replace_all('nt','NT') %>%
+      str_replace_all('plgf','PlGF') %>%
+      str_replace_all('pp13','PP13') %>%
+      str_replace_all('adam12','ADAM12') %>%
+      str_replace_all('parity','Parity') %>%
+      str_replace_all('conception','Conception') %>%
+      str_replace_all('efw','EFW') %>%
+      str_replace_all('sflt1|sflt','sFLT-1') %>%
+      str_replace_all('ua_pi','UA-PI') %>%
+      str_replace_all('mca_pi','MCA-PI') %>%
+      str_replace_all('ica_pi','ICA-PI') %>%
+      str_replace_all('ra_pi','RA-PI') %>%
+      str_replace_all('ao_pi','AO-PI') %>%
+      str_replace_all('cu_r','CU-R') %>%
+      str_replace_all('mca_sd','MCA-SD') %>%
+      str_replace_all('ua_sd','UA-SD') %>%
+      str_replace_all('upa_sd','UPA-SD') %>%
+      str_replace_all('mca_ri','MCA-RI') %>%
+      str_replace_all('ua_ri','UA-RI') %>%
+      str_replace_all('uta_ri','UtA-RI') %>%
+      str_replace_all('height','Height') %>%
+      str_replace_all('med_history','Med. history') %>%
+      str_replace_all('bmi','BMI') %>%
+      str_replace_all('alc_drinker','Alc. drinker') %>%
+      str_replace_all('drug_abuse','Drug abuse') %>%
+      str_replace_all('fam_history_pe','Fam. history of PE') %>%
+      str_replace_all('medication_preg','Medication in pregnancy') %>%
+      str_replace_all('mco','MCO') %>%
+      str_replace_all(',',', ')
+  ) %>%
+  inner_join(
+    auroc_table %>%
+      mutate(
+        study=
+          model %>%
+          as.character() %>%
+          sapply(function(x){
+            if(str_detect(x,'\\[|\\]')){
+              str_sub(
+                x
+                ,str_locate_all(x,'\\[|\\]')[[1]][1,1]
+                ,str_locate_all(x,'\\[|\\]')[[1]][2,1]
+              )
+            }else{
+              x
+            }
+          })
+      )
+    ,by='study'
+  ) %>%
+  mutate(
+    study2=
+      study %>%
+      str_remove_all('[:alpha:]|\\[|\\]') %>%
+      as.numeric()
+    ,study3=
+      study %>%
+      str_remove_all('[:digit:]|\\[|\\]')
+  ) %>%
+  left_join(
+    read_xlsx('data/srma_study_model.xlsx') %>%
+      rename(study2=study)
+    ,by='study2'
+  ) %>%
+  mutate(
+    study=
+      citation %>%
+      paste0(ifelse(study3=='','    ',paste0(', ', study3)))
+  ) %>%
+  select(-study2,-study3) %>%
+  mutate(study=reorder(study,Score))
+
+srma_group3=
+  srma_group3 %>%
+  mutate(
+    predictor=
+      predictor %>%
+      factor(
+        srma_group3 %>%
+          filter(used==1) %>%
+          arrange(type,study) %>%
+          pull(predictor) %>%
+          unique() %>%
+          rev()
+      )
+    ,type=
+      type %>%
+      factor(c(
+        'Ultrasound only'
+        ,'Ultrasound with others'
+        ,'Biomarker only'
+        ,'Biomarker with others'
+        ,'Both without others'
+        ,'Both with others'
+        ,'Others only'
+        ,''
+      ))
+    ,type2=
+      case_when(
+        predictor%in%c(
+          filter(srma_group3,type=='Ultrasound only' & used==1)$predictor
+          ,'EFW','MAP','NT'
+        )
+        ~'Ultrasound'
+        ,predictor
+         %in%c('PAPP-A','CRL','PlGF','sFLT-1','Free b-hCG','PP13','ADAM12')
+         ~'Biomarker'
+        ,predictor
+         %in%filter(srma_group3,str_detect(type,'Ot|other') & used==1)$predictor
+         ~'Others'
+      ) %>%
+      factor(c(
+        'Ultrasound'
+        ,'Biomarker'
+        ,'Others'
+      ))
+  ) %>%
+  mutate(used=ifelse(used==1,'yes','no')) %>%
+  filter(!is.na(predictor))
+
+auroc_plain=
+  srma_group3 %>%
+  select(study,type,Score,lb,ub) %>%
+  unique() %>%
+  ggplot(aes(study,Score)) +
+  geom_point(size=1) +
+  geom_errorbar(aes(ymin=lb,ymax=ub),width=0.5,size=1) +
+  geom_vline(xintercept=seq(0.5,20.5,1),color='grey') +
+  geom_hline(
+    yintercept=
+      auroc_table %>%
+      filter(model=='DI-VNN' & set=='Internal calibration\nsplit') %>%
+      pull(Score)
+    ,lty=2
+  ) +
+  geom_hline(
+    yintercept=
+      auroc_table %>%
+      filter(model=='DI-VNN' & set=='External random &\nnon-random splits') %>%
+      pull(Score)
+    ,lty=2
+  ) +
+  geom_hline(yintercept=0.5,lty=2) +
+  geom_text(
+    x=1
+    ,y=
+      auroc_table %>%
+      filter(model=='DI-VNN' & set=='Internal calibration\nsplit') %>%
+      pull(Score)
+    ,aes(
+      label=
+        ifelse(
+          type=='Ultrasound only' & study=='Bano S et al. (2010), a'
+          ,'DI-VNN (Internal calibration split)'
+          ,NA
+        )
+      )
+    ,size=2.5,hjust=0,vjust=-0.5,na.rm=T
+  ) +
+  geom_text(
+    x=1
+    ,y=
+      auroc_table %>%
+      filter(model=='DI-VNN' & set=='External random &\nnon-random splits') %>%
+      pull(Score)
+    ,aes(
+      label=
+        ifelse(
+          type=='Ultrasound only' & study=='Bano S et al. (2010), a'
+          ,'DI-VNN (External random & non-random splits)'
+          ,NA
+        )
+      )
+    ,size=2.5,hjust=0,vjust=-0.5,na.rm=T
+  ) +
+  geom_text(
+    x=1
+    ,y=0.5
+    ,aes(
+      label=
+        ifelse(
+          type=='Ultrasound only' & study=='Bano S et al. (2010), a'
+          ,'Random guess'
+          ,NA
+        )
+      )
+    ,size=2.5,hjust=0,vjust=-0.5,na.rm=T
+  ) +
+  facet_grid(~type,scales='free',space='free',switch='both') +
+  scale_y_continuous(
+    'AUROC (95% CI)',breaks=seq(0,1,0.1)
+    ,labels=scales::number_format(accuracy=0.1,decimal.mark='.')
+  ) +
+  theme(
+    panel.grid.major.x=element_blank()
+    ,axis.title.x=element_blank()
+    ,axis.text.x=element_blank()
+    # ,axis.text.x=element_text(angle=90,vjust=0.5,hjust=1)
+    ,axis.ticks.x=element_blank()
+    ,axis.title.y=element_text(size=unit(10,'pt'),family='sans')
+    ,axis.text.y=element_text(size=unit(8,'pt'),family='sans')
+    ,strip.text.x=element_blank()
+  )
+
+feature_details=
+  srma_group3 %>%
+  ggplot(aes(study,predictor,fill=used)) +
+  geom_tile(color='white') +
+  facet_grid(type2~type,scales='free',space='free',switch='x') +
+  theme(
+    axis.title.x=element_blank()
+    ,axis.text.x=element_blank()
+    # ,axis.text.x=element_text(angle=90,vjust=0.5,hjust=1)
+    ,axis.ticks.x=element_blank()
+    ,axis.title.y=element_blank()
+    ,axis.text.y=element_text(size=unit(8,'pt'),family='sans')
+    ,legend.position='none'
+    ,strip.text.x=element_blank()
+    ,strip.placement='outside'
+  )
+
+sampsize_details=
+  srma_group3 %>%
+  select(study,type,total) %>%
+  unique() %>%
+  ggplot(aes(study,total)) +
+  geom_col(width=0.5) +
+  geom_vline(xintercept=seq(0.5,20.5,1),color='grey') +
+  geom_hline(yintercept=30529+143,lty=2) +
+  geom_text(
+    x=1
+    ,y=log2(30529+143)
+    ,aes(
+      label=
+        ifelse(
+          type=='Ultrasound only' & study=='Bano S et al. (2010), a'
+          ,'DI-VNN (Training set)'
+          ,NA
+        )
+      )
+    ,size=2.5,hjust=0,vjust=1.25,na.rm=T
+  ) +
+  facet_grid(~type,scales='free',space='free',switch='both') +
+  scale_y_continuous(
+    'Sample size',trans='log2'
+    ,labels=scales::number_format(accuracy=1,decimal.mark='.',big.mark=',')
+  ) +
+  theme(
+    panel.grid.major.x=element_blank()
+    ,axis.title.x=element_blank()
+    # ,axis.text.x=element_blank()
+    ,axis.text.x=
+      element_text(size=unit(8,'pt'),family='sans',angle=90,vjust=0.5,hjust=1)
+    ,axis.ticks.x=element_blank()
+    ,axis.title.y=element_text(size=unit(10,'pt'),family='sans')
+    ,axis.text.y=element_text(size=unit(8,'pt'),family='sans')
+    ,strip.text.x=element_blank()
+  )
+```
+
+```{r Plot the AUROCs with features, include=FALSE}
+auroc_features=
+  ggarrange(
+    ggarrange(
+      NULL
+      ,auroc_plain
+      ,NULL
+      ,ncol=3,nrow=1
+      ,widths=c(0.9,6.08661,0.3)
+    )
+    ,feature_details
+    ,ggarrange(
+      NULL
+      ,sampsize_details
+      ,NULL
+      ,ncol=3,nrow=1
+      ,widths=c(0.9-0.185,6.08661+0.185,0.3)
+    )
+    ,ncol=1,nrow=3
+    ,heights=c(1.7,4.08661,2.8)
+    # ,labels=letters[1:3]
+  )
+```
+
+```{r Compare the AUROCs with features, fig.height=8.58661, fig.width=7.08661}
+auroc_features
 ```
 
 ## Important predictors
@@ -10163,7 +10565,7 @@ figure_b10 %>%
   theme_blank()
 ```
 
-```{r figure-3, echo=FALSE, fig.height=5.85827, fig.width=7.08661}
+```{r figure-3, echo=FALSE, fig.height=6.85827, fig.width=7.08661}
 # fig.height=5.85827, fig.width=7.08661 on top of this chunk if shown here
 suppressWarnings(ggarrange(
     ggarrange(
@@ -10174,16 +10576,69 @@ suppressWarnings(ggarrange(
       ,labels=c('','','')
       ,ncol=1,nrow=3
     )
-    ,dca
-    ,heights=c(4,1.85827)
-    ,labels=c('a','b')
+    ,ggarrange(
+      dca
+      ,roc2 %>%
+        filter(bound=='avg') %>%
+        rename(study=model,sens=tpr,spec=tnr) %>%
+        filter(!study%in%c('Causal RR','PC-RF')) %>%
+        mutate(
+          study=
+            study %>%
+            factor(c('DI-VNN','PC-ENR','PC-GBM'))
+        ) %>%
+        mutate(set='Internal calibration\nsplit') %>%
+        ggplot(aes(spec,sens,color=year)) +
+        geom_vline(xintercept=c(0.95),lty=2) +
+        geom_abline(slope=1,intercept=1,lty=2) +
+        geom_line(aes(color=study),show.legend=F) +
+        geom_text(
+          data=
+            spec_th %>%
+            filter(!model%in%c('Causal RR','PC-RF')) %>%
+            mutate(th=round(th,2)) %>%
+            left_join(
+              roc %>%
+                filter(bound=='avg') %>%
+                select(model,th,nb)
+              ,by=c('th','model')
+            ) %>%
+            left_join(
+              data.frame(
+                model=c('PC-ENR','PC-GBM','DI-VNN')
+                ,x_value=c(0.925,0.925,0.925)
+                ,y_value=c(0.9-0.07,0.9-0.14,0.9)
+              )
+              ,by='model'
+            ) %>%
+            rename(study=model,sens=tpr,spec=tnr)
+          ,aes(
+            x=x_value
+            ,y=y_value
+            ,label=paste0(round(th,2),', ',study)
+            ,color=study
+          )
+          ,size=2.5,hjust=0,vjust=0.5,family='sans'
+          ,show.legend=F
+        ) +
+        facet_wrap(~set,scales='free',ncol=1) +
+        # coord_equal() +
+        scale_x_reverse('Specificity',limits=c(1,0)) +
+        scale_y_continuous('Sensitivity',limits=c(0,1))
+      ,auroc2
+      ,widths=c(3-0.6,2.58661+0.25,1.5+0.35)
+      ,labels=c('b','c','')
+      ,ncol=3,nrow=1
+    )
+    ,heights=c(4,2.85827)
+    ,labels=c('a','')
     ,ncol=1,nrow=2
   )) +
   ggsave(
-    filename="figure2.eps"
+    filename="doc/figure2.eps"
     ,device=cairo_ps
     ,width=170
-    ,height=170/7.08661*5.85827
+    ,height=170/7.08661*6.85827#170/7.08661*5.85827
     ,unit='mm'
   )
 ```
@@ -10541,6 +10996,17 @@ srma_rename %>%
     ,device=cairo_ps
     ,width=170
     ,height=170/5.85827*7.08661
+    ,unit='mm'
+  )
+```
+
+```{r Compare the AUROCs with features, fig.height=8.58661, fig.width=7.08661}
+auroc_features +
+  ggsave(
+    filename="doc/figure3.eps"
+    ,device=cairo_ps
+    ,width=170
+    ,height=170/7.08661*8.58661
     ,unit='mm'
   )
 ```
