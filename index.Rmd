@@ -8819,11 +8819,11 @@ srma_group3=
       case_when(
         predictor%in%c(
           filter(srma_group3,type=='Ultrasound only' & used==1)$predictor
-          ,'EFW','MAP','NT'
+          ,'EFW','MAP','NT','CRL'
         )
         ~'Ultrasound'
         ,predictor
-         %in%c('PAPP-A','CRL','PlGF','sFLT-1','Free b-hCG','PP13','ADAM12')
+         %in%c('PAPP-A','PlGF','sFLT-1','Free b-hCG','PP13','ADAM12')
          ~'Biomarker'
         ,predictor
          %in%filter(srma_group3,str_detect(type,'Ot|other') & used==1)$predictor
